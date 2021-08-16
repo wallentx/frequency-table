@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+
+function usage {
+	echo "Usage: ftable [options]"
+	echo ""
+	echo "  options:"
+	echo "  -m <1000-9999>	highlight frequencies above threshold"
+	echo "  -n <SECS>		seconds to wait between updates (Default: 2)"
+}
+
+XMMM=9
+MXMM=9
+MMXM=9
+MMMX=9
+NWAIT=2
+
+while getopts ":m:n:h" arg; do
+	case ${arg} in
+	m)
+		THRESH=$OPTARG
+		if [[ $THRESH -ge 1000 && $THRESH -le 9999 ]]; then
+			XMMM=$(echo ${THRESH:0:1})
+			MXMM=$(echo ${THRESH:1:1})
+			MMXM=$(echo ${THRESH:2:1})
+			MMMX=$(echo ${THRESH:3:1})
+		else
+			echo "ERROR: Invalid MHz threshold"
+			echo "Value must be between 1000-9999 MHz"
+			exit
+		fi
+		;;
+	n)
+		if [[ "${OPTARG}" =~ ^[0-9]+$ ]]; then
+			NWAIT="${OPTARG}"
+		else
+			echo "ERROR: Invalid wait interval"
+			echo "Value must be an integer"
+			exit 1
+		fi
+		;;
+	h)
+		usage
+		exit 0
+		;;
+	*)
+		usage
+		exit 1
+		;;
+	esac
+done
+
+# Making prettytable portable as 'prettyt'
+# prettytable from https://github.com/jakobwesthoff/prettytable.sh
+_ptable_char_top_left="┌"
+_ptable_char_horiz="─"
+_ptable_char_vert="│"
+_ptable_char_bottom_left="└"
+_ptable_char_bottom_right="┘"
+_ptable_char_top_right="┐"
+_ptable_char_vert_horiz_left="├"
+_ptable_char_vert_horiz_right="┤"
+_ptable_char_vert_horiz_top="┬"
+_ptable_char_vert_horiz_bottom="┴"
+_ptable_char_vert_horiz="┼"
+# Default colors
+_ptable_c_blue="0;34"
+_ptable_c_green="0;32"
+_ptable_c_cyan="0;36"
+_ptable_c_red="0;31"
+_ptable_c_purple="0;35"
+_ptable_c_yellow="0;33"
+_ptable_c_gray="1;30"
+_ptable_c_light_blue="1;34"
+_ptable_c_light_green="1;32"
+_ptable_c_light_cyan="1;36"
+_ptable_c_light_red="1;31"
+_ptable_c_light_purple="1;35"
+_ptable_c_light_yellow="1;33"
+_ptable_c_light_gray="0;37"
+# Somewhat special colors
+_ptable_c_black="0;30"
+_ptable_c_white="1;37"
+_ptable_c_none="0"
+
+function _ptable_prettify_lines() {
+	cat - | sed -e "s@^@${_ptable_char_vert}@;s@\$@	@;s@	@	${_ptable_char_vert}@g"
+}
+
+function _ptable_fix_border_lines() {
+	cat - | sed -e "1s@ @${_ptable_char_horiz}@g;3s@ @${_ptable_char_horiz}@g;\$s@ @${_ptable_char_horiz}@g"
+}
+
+function _ptable_cize_lines() {
+	local color="$1"
+	local range="$2"
+	local ansicolor="$(eval "echo \${_ptable_c_${color}}")"
+	cat - | sed -e "${range}s@\\([^${_ptable_char_vert}]\\{1,\\}\\)@"$'\E'"[${ansicolor}m\1"$'\E'"[${_ptable_c_none}m@g"
+}
+
+function prettyt() {
+	local cols="${1}"
+	local color="${2:-none}"
+	local input="$(cat -)"
+	local header="$(echo -e "${input}" | head -n1)"
+	local body="$(echo -e "${input}" | tail -n+2)"
+	{
+		# Top border
+		echo -n "${_ptable_char_top_left}"
+		for i in $(seq 2 ${cols}); do
+			echo -ne "\t${_ptable_char_vert_horiz_top}"
+		done
+		echo -e "\t${_ptable_char_top_right}"
+		echo -e "${header}" | _ptable_prettify_lines
+		# Header/Body delimiter
+		echo -n "${_ptable_char_vert_horiz_left}"
+		for i in $(seq 2 ${cols}); do
+			echo -ne "\t${_ptable_char_vert_horiz}"
+		done
+		echo -e "\t${_ptable_char_vert_horiz_right}"
+		echo -e "${body}" | _ptable_prettify_lines
+		# Bottom border
+		echo -n "${_ptable_char_bottom_left}"
+		for i in $(seq 2 ${cols}); do
+			echo -ne "\t${_ptable_char_vert_horiz_bottom}"
+		done
+		echo -e "\t${_ptable_char_bottom_right}"
+	} | column -t -s $'\t' | _ptable_fix_border_lines | _ptable_cize_lines "${color}" "2"
+}
+
+fakewatch() {
+	while true; do
+		DATE=$(date)
+		RESULT=$("${@}")
+		clear
+		echo "$DATE"
+		echo "$RESULT"
+		read -t "$NWAIT" -n 1 k
+		if [[ $k = q ]]; then
+			break
+		fi
+	done
+}
+
+ftable() {
+	echo "Refreshing every $NWAIT seconds"
+	if [[ -n $THRESH ]]; then
+		echo "Watching for frequency above $THRESH MHz" | grep --color=always -E -e '^' -e "[$XMMM-9][$MXMM-9][$MMXM-9][$MMMX-9]"
+	fi
+	{
+		printf 'Core\tMHz\tCore\tMHz\n'
+		printf '%s\t%s\t%s\t%s\n'
+		printf "$(grep 'cpu MHz' /proc/cpuinfo | choose 3 | nl --number-format=ln | pr -2 -t | grep 'cpu MHz' /proc/cpuinfo | choose 3 | nl -s ',' | column -t | pr -2 -t | tr -s '[[:space:]] ' | tr ',' '\t' | sed 's/ //g')"
+	} |
+		prettyt 4 blue |
+		grep --color=always -E -e '^' -e "[$XMMM-9][$MXMM-9][$MMXM-9][$MMMX-9]"
+	echo "Press 'q' to quit"
+}
+
+fakewatch ftable
